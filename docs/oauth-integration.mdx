@@ -1,0 +1,547 @@
+---
+title: "Soundlink OAuth Integration"
+sidebarTitle: "OAuth Integration"
+description: "Connect your application to a Soundlink organization using Authorization Code + PKCE, then keep access with Client Credentials."
+icon: "key"
+---
+
+Soundlink's authorization server lets your application act on behalf of a Soundlink
+organization. A user grants consent once; your application records the organization id and
+uses it for ongoing access.
+
+<Info>
+  **Issuer:** `https://api.getsoundlink.com` · **Access token lifetime:** 3600 seconds ·
+  **PKCE:** required (`S256`) · **Refresh tokens:** not issued
+</Info>
+
+## Which grant do I need?
+
+<CardGroup cols={2}>
+  <Card title="Authorization Code + PKCE" icon="user-check">
+    A user signs in and approves scopes. Use this to **establish** the connection and to read
+    identity via `userinfo`.
+
+    Produces a token that acts as **the user**.
+  </Card>
+  <Card title="Client Credentials" icon="server">
+    Your application authenticates as itself for an organization it already has a grant for.
+    Use this for **ongoing, unattended** access.
+
+    Produces a token that acts as **your application**.
+  </Card>
+</CardGroup>
+
+You will need **both**. Only the consent flow creates a grant, and Client Credentials requires
+an existing grant — so a client configured with Client Credentials alone cannot bootstrap
+itself.
+
+<Warning>
+  **There are no refresh tokens.** An Authorization Code token cannot be renewed — when it
+  expires after one hour, the user must consent again. A Client Credentials token can be
+  re-requested at any time. Design your integration around the Client Credentials grant for
+  anything long-running.
+</Warning>
+
+---
+
+## 1. Discovery
+
+Read endpoint locations from the metadata document rather than hardcoding them.
+
+<CodeGroup>
+```bash cURL
+curl https://api.getsoundlink.com/.well-known/oauth-authorization-server
+```
+
+```ts TypeScript
+const metadata = await fetch(
+  "https://api.getsoundlink.com/.well-known/oauth-authorization-server",
+).then((res) => res.json());
+```
+</CodeGroup>
+
+```json Response
+{
+  "issuer": "https://api.getsoundlink.com",
+  "authorization_endpoint": "https://api.getsoundlink.com/api/v1/oauth/authorize",
+  "token_endpoint": "https://api.getsoundlink.com/api/v1/oauth/token",
+  "userinfo_endpoint": "https://api.getsoundlink.com/api/v1/oauth/userinfo",
+  "grant_revocation_endpoint": "https://api.getsoundlink.com/api/v1/oauth/grants/revoke",
+  "scopes_supported": ["openid", "email", "campaigns:read", "metrics:read"],
+  "response_types_supported": ["code"],
+  "grant_types_supported": ["authorization_code", "client_credentials"],
+  "code_challenge_methods_supported": ["S256"],
+  "token_endpoint_auth_methods_supported": ["client_secret_post", "none"]
+}
+```
+
+<Note>
+  The response is cacheable for 300 seconds (`Cache-Control: public, max-age=300`). The values
+  in this document are authoritative — if they ever differ from the paths written here, follow
+  the document.
+</Note>
+
+---
+
+## 2. Onboarding your client
+
+Soundlink registers confidential clients for you. There is **no self-service or dynamic client
+registration**, and public clients are not supported.
+
+Provide the following when requesting a client:
+
+<ParamField body="name" type="string" required>
+  Display name shown to users on the consent screen.
+</ParamField>
+
+<ParamField body="redirectUris" type="string[]" required>
+  Every callback URL your application will use. Must be absolute **HTTPS** URLs. Matched
+  **exactly** at authorize time — no wildcards, no path or query flexibility, no trailing-slash
+  tolerance.
+</ParamField>
+
+<ParamField body="allowedGrantTypes" type="string[]" required>
+  Request **both** `authorization_code` and `client_credentials` (see above).
+</ParamField>
+
+<ParamField body="allowedScopes" type="string[]" required>
+  The maximum set your client may ever request. Any `scope` sent to `/authorize` must be a
+  subset of this.
+</ParamField>
+
+<ParamField body="logoUrl" type="string">
+  Optional. Absolute URL, shown on the consent screen.
+</ParamField>
+
+You will receive a `client_id` and a `client_secret`.
+
+<Warning>
+  **The `client_secret` is shown exactly once**, at registration. Soundlink stores only a hash
+  and cannot recover it. Store it in a secrets manager immediately; if it is lost, the client
+  must be re-registered.
+</Warning>
+
+<Tip>
+  Because redirect URIs must be HTTPS, local development needs an HTTPS tunnel (ngrok,
+  Cloudflare Tunnel, or similar). Register the tunnel URL as an additional redirect URI.
+</Tip>
+
+### Feature-flag enablement
+
+Every organization that will authorize your client must have the
+`THIRD_PARTY_INTEGRATIONS_ENABLED` feature flag switched on by Soundlink. It is **off by
+default**.
+
+Until it is enabled, that organization will see:
+
+| Where | Result |
+|---|---|
+| Consent approval | `403` — integrations disabled |
+| Token request (`client_credentials`) | `400 invalid_grant` |
+| Any request using a bearer token | `403 access_denied` |
+
+---
+
+## 3. Authorization Code + PKCE
+
+<Steps>
+  <Step title="Generate PKCE values and state">
+    Create a `code_verifier`, derive its `S256` challenge, and generate an unguessable `state`.
+
+    ```ts
+    import { createHash, randomBytes } from "node:crypto";
+
+    // 43–128 characters from [A-Za-z0-9._~-]
+    const codeVerifier = randomBytes(32).toString("base64url");
+
+    // Exactly 43 characters from [A-Za-z0-9_-]
+    const codeChallenge = createHash("sha256")
+      .update(codeVerifier)
+      .digest("base64url");
+
+    const state = randomBytes(16).toString("base64url");
+    ```
+
+    Store `codeVerifier` and `state` server-side, bound to the user's session — for example in
+    a signed, httpOnly cookie with a short TTL. **Never** put the verifier in the browser or in
+    a URL.
+  </Step>
+
+  <Step title="Redirect the user to the authorization endpoint">
+    ```
+    GET https://api.getsoundlink.com/api/v1/oauth/authorize
+      ?client_id=YOUR_CLIENT_ID
+      &redirect_uri=https%3A%2F%2Fapp.example.com%2Foauth%2Fcallback
+      &response_type=code
+      &scope=openid%20email%20campaigns%3Aread
+      &code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM
+      &code_challenge_method=S256
+      &state=Wv6bQ2xKpN8sT1yZ
+    ```
+
+    <ParamField query="client_id" type="string" required>Your registered client id.</ParamField>
+    <ParamField query="redirect_uri" type="string" required>Must exactly match a registered URI.</ParamField>
+    <ParamField query="response_type" type="string" required>Must be `code`.</ParamField>
+    <ParamField query="scope" type="string" required>Space-separated; a subset of your allowed scopes.</ParamField>
+    <ParamField query="code_challenge" type="string" required>43 characters, `[A-Za-z0-9_-]`.</ParamField>
+    <ParamField query="code_challenge_method" type="string" required>Must be `S256`. Plain is not accepted.</ParamField>
+    <ParamField query="state" type="string">Opaque value echoed back on every redirect. Strongly recommended.</ParamField>
+
+    On success the user is redirected (`302`) to the Soundlink consent screen. This endpoint
+    sends `Cache-Control: no-store`.
+  </Step>
+
+  <Step title="The user approves, and Soundlink returns to your callback">
+    ```
+    GET https://app.example.com/oauth/callback?code=AUTHORIZATION_CODE&state=Wv6bQ2xKpN8sT1yZ
+    ```
+
+    Compare `state` against the value you stored **before** doing anything else, and reject the
+    request if it does not match. If the user declines, you receive
+    `?error=access_denied&state=…` instead — treat this as a normal outcome, not a failure.
+  </Step>
+
+  <Step title="Exchange the code for a token">
+    The request is `application/x-www-form-urlencoded`. This grant authenticates with the PKCE
+    verifier and sends **no `client_secret`**.
+
+    <CodeGroup>
+    ```bash cURL
+    curl -X POST https://api.getsoundlink.com/api/v1/oauth/token \
+      -H "Content-Type: application/x-www-form-urlencoded" \
+      -d "grant_type=authorization_code" \
+      -d "code=AUTHORIZATION_CODE" \
+      -d "redirect_uri=https://app.example.com/oauth/callback" \
+      -d "client_id=YOUR_CLIENT_ID" \
+      -d "code_verifier=YOUR_STORED_CODE_VERIFIER"
+    ```
+
+    ```ts TypeScript
+    const res = await fetch("https://api.getsoundlink.com/api/v1/oauth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: "https://app.example.com/oauth/callback",
+        client_id: process.env.SOUNDLINK_CLIENT_ID!,
+        code_verifier: storedCodeVerifier,
+      }),
+    });
+    ```
+    </CodeGroup>
+
+    ```json 200 Response
+    {
+      "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.PAYLOAD.SIGNATURE",
+      "token_type": "Bearer",
+      "expires_in": 3600,
+      "scope": "openid email campaigns:read"
+    }
+    ```
+
+    `redirect_uri` must be identical to the one used in the previous step. Authorization codes
+    are single-use.
+  </Step>
+
+  <Step title="Record the organization id">
+    `organization_id` is a claim on the access token, so no extra request is needed to read it.
+
+    **This is the one value you must persist.** Soundlink provides no endpoint that lists which
+    organizations have authorized your client, so an organization whose id you have not stored
+    is one you can no longer act for. Keep it in your own database, keyed to your own user or
+    tenant, along with `grant_id` if you intend to support disconnecting.
+  </Step>
+</Steps>
+
+### Access token claims
+
+<ResponseField name="sub" type="string">
+  The user's id for `authorization_code` tokens; your **client id** for `client_credentials`
+  tokens — those have no user.
+</ResponseField>
+<ResponseField name="organization_id" type="string">The organization the token acts for.</ResponseField>
+<ResponseField name="scopes" type="string[]">Granted scopes, as an **array**.</ResponseField>
+<ResponseField name="grant_id" type="string">Identifies the grant; required to revoke it.</ResponseField>
+<ResponseField name="grant_type" type="string">`authorization_code` or `client_credentials`.</ResponseField>
+<ResponseField name="iss" type="string">`https://api.getsoundlink.com`</ResponseField>
+<ResponseField name="aud" type="string">`https://api.getsoundlink.com`</ResponseField>
+<ResponseField name="iat / exp" type="number">Issued-at and expiry, in epoch seconds.</ResponseField>
+
+<Warning>
+  Access tokens are signed with a symmetric key and **no JWKS endpoint is published**, so you
+  cannot verify their signature. Decode claims only for values you need (such as
+  `organization_id`) from a token you have just received over TLS, and never treat a decoded
+  claim as proof of anything. Treat tokens as opaque credentials otherwise.
+</Warning>
+
+---
+
+## 4. Client Credentials (ongoing access)
+
+Once a grant exists, request tokens for that organization without involving the user. Your
+`client_secret` goes in the request body (`client_secret_post`); HTTP Basic is not supported.
+
+<CodeGroup>
+```bash cURL
+curl -X POST https://api.getsoundlink.com/api/v1/oauth/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=client_credentials" \
+  -d "client_id=YOUR_CLIENT_ID" \
+  -d "client_secret=YOUR_CLIENT_SECRET" \
+  -d "organization_id=ORGANIZATION_UUID" \
+  -d "scope=openid email"
+```
+
+```ts TypeScript
+const res = await fetch("https://api.getsoundlink.com/api/v1/oauth/token", {
+  method: "POST",
+  headers: { "Content-Type": "application/x-www-form-urlencoded" },
+  body: new URLSearchParams({
+    grant_type: "client_credentials",
+    client_id: process.env.SOUNDLINK_CLIENT_ID!,
+    client_secret: process.env.SOUNDLINK_CLIENT_SECRET!,
+    organization_id: organizationId,
+    scope: "openid email",
+  }),
+});
+```
+</CodeGroup>
+
+```json 200 Response
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.PAYLOAD.SIGNATURE",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "scope": "openid email"
+}
+```
+
+<ParamField body="scope" type="string">
+  Optional. Omit to receive the grant's full set. If supplied it must be a subset of the granted
+  scopes, or you get `invalid_scope`.
+</ParamField>
+
+**Renewal** is simply another request. Cache the token for its hour rather than minting one per
+API call — the token endpoint is rate limited per client.
+
+<AccordionGroup>
+  <Accordion title="unauthorized_client — what it means here">
+    Your client is authenticated but does not have `client_credentials` in its allowed grant
+    types. Ask Soundlink to add it.
+  </Accordion>
+  <Accordion title="invalid_grant — what it means here">
+    One of: no grant exists for this client and organization; the grant was revoked; or
+    `THIRD_PARTY_INTEGRATIONS_ENABLED` is off for that organization. Run the consent flow for
+    the organization first — Client Credentials never creates a grant.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## 5. Userinfo
+
+<Info>
+  `GET /api/v1/oauth/userinfo` requires a token from the **`authorization_code`** grant with the
+  **`openid`** scope. A Client Credentials token is rejected with `403 access_denied` regardless
+  of its scopes, because it represents an application rather than a user.
+</Info>
+
+```bash cURL
+curl https://api.getsoundlink.com/api/v1/oauth/userinfo \
+  -H "Authorization: Bearer ACCESS_TOKEN"
+```
+
+```json 200 Response
+{
+  "sub": "USER_ID",
+  "organization_id": "ORGANIZATION_UUID",
+  "iss": "https://api.getsoundlink.com",
+  "email": "user@example.com"
+}
+```
+
+`email` is present only when the token carries the `email` scope. Responses send
+`Cache-Control: no-store`.
+
+Failures return `{ "error": "…" }` with a `WWW-Authenticate` header:
+
+| Status | Code | Meaning |
+|---|---|---|
+| `401` | `invalid_token` | Missing, malformed, expired, or unparseable token |
+| `403` | `insufficient_scope` | Token lacks `openid` |
+| `403` | `access_denied` | Wrong grant type, or the organization's feature flag is off |
+
+Send exactly one `Authorization` header — two are rejected rather than merged.
+
+---
+
+## 6. Scopes
+
+| Scope | Grants |
+|---|---|
+| `openid` | Verify Soundlink identity; required for `userinfo` |
+| `email` | View the user's email address |
+| `campaigns:read` | View campaigns |
+| `metrics:read` | View campaign metrics |
+
+Request the minimum you need — the consent screen shows each scope to the user, and a shorter
+list converts better. `scope` values are space-separated, must be unique, and must fall within
+your client's registered `allowedScopes`.
+
+---
+
+## 7. Revoking a grant
+
+Disconnect an organization by revoking the grant. Authenticate with your client credentials and
+identify the grant by `grant_id` (available as a token claim).
+
+```bash cURL
+curl -X POST https://api.getsoundlink.com/api/v1/oauth/grants/revoke \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "client_id=YOUR_CLIENT_ID" \
+  -d "client_secret=YOUR_CLIENT_SECRET" \
+  -d "grant_id=GRANT_UUID"
+```
+
+Returns **`200` with an empty body**. The operation is **idempotent** — revoking an unknown or
+already-revoked grant also returns `200`, so retries are safe.
+
+<Warning>
+  **Existing access tokens survive revocation for up to one hour.**
+
+  Revocation immediately prevents *new* tokens from being issued for that grant. It does not
+  invalidate tokens already minted: access tokens are stateless and are validated without a
+  per-request grant lookup, so a token issued moments before revocation remains accepted until
+  its `exp` — at most 3600 seconds later.
+
+  If access must stop instantly, enforce it on your side as well: discard your cached tokens at
+  revocation time and stop issuing requests.
+</Warning>
+
+After revoking, delete the organization id and grant id from your store. Re-connecting requires
+the full consent flow again.
+
+---
+
+## 8. Errors and rate limits
+
+All OAuth errors return `{ "error": "<code>" }`.
+
+| Code | Typical status | Cause |
+|---|---|---|
+| `invalid_request` | `400` | Missing/malformed parameter, or a JSON body where form encoding is required |
+| `invalid_client` | `401` | `client_id`/`client_secret` rejected |
+| `invalid_grant` | `400` | Code invalid, reused or expired; or no active grant; or feature flag off |
+| `unauthorized_client` | `400` | Client not allowed to use this grant type |
+| `unsupported_grant_type` | `400` | `grant_type` is not one of the two supported values |
+| `unsupported_response_type` | `400` | `response_type` is not `code` |
+| `invalid_scope` | `400` | Scope unknown, duplicated, or outside what was granted |
+| `invalid_token` | `401` | Bearer token missing, malformed or expired |
+| `insufficient_scope` | `403` | Token lacks a required scope |
+| `access_denied` | `403` (or redirect) | User declined; or wrong grant type; or feature flag off |
+| `temporarily_unavailable` | `429` | Rate limited |
+
+### Authorize error behaviour
+
+Two distinct behaviours, which affect how you handle failures:
+
+<Tabs>
+  <Tab title="Redirected errors">
+    When `client_id` and `redirect_uri` are both valid, validation failures redirect to your
+    callback with `?error=<code>&state=<state>`. Handle these in your callback route.
+  </Tab>
+  <Tab title="Direct errors">
+    When `client_id` is unknown or revoked, or `redirect_uri` is missing or unregistered,
+    Soundlink responds `400` **without redirecting** — it will not send a user to an
+    unverified URL. These surface as a browser error page, so catch them in staging.
+  </Tab>
+</Tabs>
+
+### Rate limits
+
+| Endpoint | Limit |
+|---|---|
+| `/authorize` | 30 requests/minute per client (plus a global ceiling) |
+| `/token` | 30 requests/minute per client (plus a global ceiling) |
+
+Exceeding a limit returns `429` with `temporarily_unavailable` and a `Retry-After` header.
+Respect it with backoff. Caching Client Credentials tokens for their full hour keeps normal
+usage far below these limits.
+
+---
+
+## 9. Security checklist
+
+<AccordionGroup>
+  <Accordion title="Always send and verify state" icon="shield-check">
+    Generate an unguessable `state` per authorization request, bind it to the user's session, and
+    reject any callback whose `state` does not match. This is your CSRF defence on the redirect.
+  </Accordion>
+  <Accordion title="Keep the PKCE verifier server-side" icon="lock">
+    The `code_verifier` must never reach the browser, a URL, or client-side storage. Hold it in a
+    signed httpOnly cookie or server session with a short TTL, and consume it once.
+  </Accordion>
+  <Accordion title="Store the client secret in a secrets manager" icon="vault">
+    Never commit it, never ship it in a client bundle, never expose it through an API response.
+    Load it from the environment at runtime and rotate by requesting a new client. Exchange codes
+    and request tokens only from your backend.
+  </Accordion>
+  <Accordion title="Register exact redirect URIs" icon="link">
+    Use the fewest possible, all HTTPS, each a complete URL. Never build a redirect target from
+    user input or an open redirector, and do not rely on prefix matching — none is performed.
+  </Accordion>
+  <Accordion title="Redact tokens and secrets from logs" icon="eye-slash">
+    Treat `code`, `code_verifier`, `client_secret`, `access_token` and full `Authorization`
+    headers as secrets. Log the token's `exp` and `organization_id` if you need traceability, not
+    the token. Watch for accidental capture in request-body logs, error reporters and APM traces —
+    a `400` from the token endpoint often carries the whole form body.
+  </Accordion>
+  <Accordion title="Do not trust unverified token claims" icon="triangle-exclamation">
+    No JWKS is published, so token signatures cannot be verified by clients. Decode claims only
+    to read values from a token you just received over TLS, and never as an authorization
+    decision in your own system.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Reference application
+
+A complete, runnable implementation of everything above:
+
+<Card title="soundlink-oauth-example" icon="github" href="https://github.com/Fan-ID/soundlink-oauth-example">
+  Next.js app covering the PKCE connect flow, server-side code exchange, Client Credentials token
+  generation, `userinfo`, and grant revocation — with tokens held server-side and every request
+  triggered by an explicit action.
+</Card>
+
+Useful entry points:
+
+| Concern | Where |
+|---|---|
+| Building the authorize URL, PKCE, `state` cookie | `app/api/oauth/connect/route.ts` |
+| Code exchange and reading `organization_id` | `app/api/oauth/callback/route.ts` |
+| Client Credentials token + caching | `app/api/oauth/token/route.ts` |
+| Calling `userinfo` | `app/api/oauth/userinfo/route.ts` |
+| Grant revocation | `app/api/oauth/disconnect/route.ts` |
+
+---
+
+## Known limitations
+
+<CardGroup cols={2}>
+  <Card title="No refresh tokens" icon="rotate-right">
+    Authorization Code tokens cannot be renewed. Use Client Credentials for anything ongoing.
+  </Card>
+  <Card title="No organization discovery" icon="list">
+    No endpoint lists the organizations that authorized your client. Persist `organization_id`
+    at consent time.
+  </Card>
+  <Card title="No token introspection" icon="magnifying-glass">
+    No introspection endpoint and no JWKS. Token validity is knowable only by using it.
+  </Card>
+  <Card title="Confidential clients only" icon="user-lock">
+    No dynamic client registration and no public-client support.
+  </Card>
+</CardGroup>

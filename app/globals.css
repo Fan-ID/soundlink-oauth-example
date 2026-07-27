@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+/*
+ * Plain Tailwind — no component library. Components style themselves with utility
+ * classes from Tailwind's own palette (neutral / red), so there is no theme token layer
+ * to keep in sync.
+ *
+ * Dark mode follows the OS. `prefers-color-scheme` drives it directly, so there is no
+ * class to toggle and nothing to hydrate.
+ */
+@theme inline {
+  /* Set by next/font in app/layout.tsx. */
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-geist-mono);
+}
