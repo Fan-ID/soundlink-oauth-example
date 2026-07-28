@@ -34,6 +34,45 @@ sequenceDiagram
     App->>Soundlink: POST /oauth/grants/revoke
 ```
 
+## What the demo shows
+
+Three pages, each one step further into an organization's data.
+
+**`/` — organizations.** A tile per connected organization: short id, the email userinfo
+returned, and Disconnect. The dashed tile starts the consent flow. Connected organizations
+live in localStorage, so the list is per browser — which is the point: after consent, the
+`organization_id` is the only thing a partner has to keep.
+
+**`/orgs/<organization id>` — campaigns.** The organization's campaigns, ten per page:
+short id, status, platform, daily and total budget, duration, created date. Previous/Next
+page through `totalCount`. Clicking a campaign id opens it.
+
+**`/orgs/<organization id>/campaigns/<campaign id>` — campaign and metrics.** The campaign's
+own fields, including `strategyType`, which the list summary omits. Below that, metric totals
+for campaign start through today: listeners, streams, followers, impressions, ad and link
+clicks, media/total spend, fees, and the derived `cpl`, `cpf` and streams-per-listener.
+`impressions`, `ad_clicks` and `link_clicks` are nullable and show as `—`.
+
+The two sections load independently, so a token holding `campaigns:read` but not
+`metrics:read` shows the campaign and an explanation in place of the metrics.
+
+## Endpoints and scopes
+
+| Soundlink endpoint | Scope | Reached through |
+|---|---|---|
+| `GET /api/oauth/authorize` | — | `/api/oauth/connect` |
+| `POST /api/v1/oauth/token` (`authorization_code`) | — | `/api/oauth/callback` |
+| `POST /api/v1/oauth/token` (`client_credentials`) | — | minted for the reads below |
+| `GET /api/v1/oauth/userinfo` | `openid`, `email` | `/api/oauth/userinfo` |
+| `GET /v1/campaigns` | `campaigns:read` | `/api/campaigns` |
+| `GET /v1/campaigns/:id` | `campaigns:read` | `/api/campaigns/:id` |
+| `GET /v1/campaigns/:id/metrics/overview` | `metrics:read` | `/api/campaigns/:id/metrics` |
+| `POST /api/v1/oauth/grants/revoke` | — | `/api/oauth/disconnect` |
+
+The OAuth endpoints live under `/api/v1/`, the campaign resources under `/v1/` — both on
+`SOUNDLINK_API_BASE_URL`. Every one is called from the server, so no token reaches the
+browser.
+
 ## Application flow
 
 Server-side steps only. The browser never sees `client_secret`, the PKCE verifier, or access tokens.
@@ -217,6 +256,8 @@ Revocation stops **new** tokens. An already-issued access token remains valid un
 - A Soundlink OAuth client with the `authorization_code` and `client_credentials` grant
   types, and redirect URI `http://localhost:3005/api/oauth/callback`
 - `THIRD_PARTY_INTEGRATIONS_ENABLED` enabled for the target organization
+- The client allowed the scopes it asks for — `SOUNDLINK_SCOPES` defaults to
+  `openid email campaigns:read metrics:read`, and the campaign pages need the last two
 
 **Run**
 
@@ -235,6 +276,5 @@ Revocation stops **new** tokens. An already-issued access token remains valid un
    npm run dev
    ```
 
-4. Open [http://localhost:3005](http://localhost:3005) and connect an organization. It
-   appears as a tile — short id, email, Disconnect — and clicking it opens
-   `/orgs/<organization id>`.
+4. Open [http://localhost:3005](http://localhost:3005) and connect an organization, then
+   click through it to a campaign — see [What the demo shows](#what-the-demo-shows).
