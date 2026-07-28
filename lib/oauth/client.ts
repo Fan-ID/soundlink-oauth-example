@@ -120,6 +120,72 @@ export async function fetchUserinfo(
   return { status: res.status, ok: res.ok, body };
 }
 
+export type CampaignStatus =
+  | "creating"
+  | "active"
+  | "paused"
+  | "stopped"
+  | "completed"
+  | "failed"
+  | "ended";
+
+export interface Campaign {
+  campaignId: string;
+  organizationId: string;
+  status: CampaignStatus;
+  socialPlatform: string;
+  dailyBudget: number;
+  totalBudget: number;
+  campaignDuration: number;
+  /** Writes are only supported for generation 3. */
+  generation: 1 | 2 | 3;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CampaignsPagination {
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  totalPages: number;
+}
+
+/** Envelope of `GET /v1/campaigns` — items and pagination live under `data`. */
+export interface CampaignsResponse {
+  data: { items: Campaign[]; pagination: CampaignsPagination };
+  meta?: { requestId?: string };
+}
+
+/**
+ * List the organization's campaigns.
+ *
+ * Needs `campaigns:read`. Unlike userinfo this is a public-API resource rather than an OAuth
+ * endpoint, but it authenticates the same way — a bearer token for the organization.
+ *
+ * `sortBy`/`sortOrder` are left at their documented defaults (`createdAt` descending).
+ * Returns the status rather than throwing, so a 401/403 can be shown as an outcome.
+ */
+export async function fetchCampaigns(
+  config: OAuthConfig,
+  accessToken: string,
+  params: { page: number; pageSize: number },
+): Promise<BearerCallResult> {
+  const url = new URL(`${config.apiBaseUrl}/v1/campaigns`);
+  url.searchParams.set("page", String(params.page));
+  url.searchParams.set("pageSize", String(params.pageSize));
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+    },
+  });
+
+  const body = await readJson<CampaignsResponse>("campaigns", res);
+
+  return { status: res.status, ok: res.ok, body };
+}
+
 /** Decode JWT payload server-side only; does not verify signature. */
 export function decodeJwtPayload(token: string): Record<string, unknown> | null {
   const parts = token.split(".");
@@ -135,9 +201,11 @@ export function decodeJwtPayload(token: string): Record<string, unknown> | null 
 /**
  * Machine-to-machine token: the client authenticates as itself with `client_id` +
  * `client_secret` and names the organization it wants to act for. Requires an existing,
- * non-revoked grant for that client + organization — this grant type never creates one.
+ * non-revoked grant for that client + organization — this grant type never creates one, so
+ * consent has to have happened first.
  *
- * There is no refresh token, so renewing means calling this again.
+ * There is no refresh token, so renewing means calling this again. That is what makes the
+ * stored `organization_id` enough to keep access alive indefinitely.
  */
 export async function requestClientCredentialsToken(
   config: OAuthConfig,

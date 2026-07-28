@@ -5,13 +5,16 @@ import type { OAuthConfig } from "./config";
  * Server-only cache of **client-credentials** tokens, keyed by organization.
  *
  * Separate from lib/store/access-token-store.ts on purpose — these are two different kinds
- * of token and only one of them can call userinfo:
+ * of token, and what they can do differs:
  *
  *   - this file: minted on demand from client_id + client_secret + organization_id.
- *     Renewable forever, but no endpoint accepts it yet.
- *   - access-token-store: the token from consent. Accepted by userinfo, not renewable.
+ *     Renewable forever, and what the public API resources accept.
+ *   - access-token-store: the token from consent. The only one userinfo accepts, and it
+ *     cannot be renewed.
  *
- * Caching keeps repeat clicks off the token endpoint, which is rate-limited per client.
+ * This is why a partner only needs to persist `organization_id`: with it, access outlives
+ * any single token. Caching keeps repeat requests off the token endpoint, which is
+ * rate-limited per client.
  */
 interface CachedToken {
   accessToken: string;
@@ -35,20 +38,14 @@ export interface ClientCredentialsToken {
 
 /**
  * Return a usable token for the organization, minting one when the cached token is missing
- * or expired. Pass `force` to mint even when the cached one is still valid — that is how
- * renewal is demonstrated without waiting out the full hour.
+ * or expired.
  */
 export async function getClientCredentialsToken(
   config: OAuthConfig,
   organizationId: string,
-  options: { force?: boolean } = {},
 ): Promise<ClientCredentialsToken> {
   const cached = cache.get(organizationId);
-  if (
-    !options.force &&
-    cached &&
-    cached.expiresAt - EXPIRY_SKEW_MS > Date.now()
-  ) {
+  if (cached && cached.expiresAt - EXPIRY_SKEW_MS > Date.now()) {
     return {
       accessToken: cached.accessToken,
       scopes: cached.scopes,

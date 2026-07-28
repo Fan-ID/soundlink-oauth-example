@@ -5,9 +5,12 @@ import { clearToken } from "@/lib/oauth/token-cache";
 import { clearAccessToken } from "@/lib/store/access-token-store";
 
 /**
- * Disconnect: revoke the application's grant and drop both kinds of token held for the
- * organization — the consent token and any cached client-credentials token. The browser
- * removes the organization from localStorage afterwards.
+ * Disconnect: revoke the application's grant and drop both tokens held for the organization
+ * — the consent token and any minted client-credentials token. The browser removes the
+ * organization from localStorage afterwards.
+ *
+ * Clearing the minted one matters: revocation stops new tokens being issued, so a cached
+ * token would otherwise keep working for up to an hour after disconnecting.
  *
  * Idempotent — revoking an unknown or already-revoked grant succeeds, and a request with
  * no `grant_id` still clears the tokens. Repeated disconnects behave identically.
