@@ -26,14 +26,14 @@ export interface BearerCallResult {
   body: unknown;
 }
 
-/** Read a response once, logging the raw payload and tolerating non-JSON bodies. */
-async function readJson<T>(label: string, res: Response): Promise<T | OAuthErrorBody> {
+/**
+ * Read a response body, tolerating a non-JSON one.
+ *
+ * An empty object stands in for anything unparseable, so callers can branch on `res.ok` and
+ * read an error code without guarding every access.
+ */
+async function readJson<T>(res: Response): Promise<T | OAuthErrorBody> {
   const raw = await res.text();
-  console.log(`[${label}] raw response`, {
-    status: res.status,
-    ok: res.ok,
-    body: raw,
-  });
   try {
     return JSON.parse(raw) as T;
   } catch {
@@ -74,20 +74,7 @@ export async function exchangeAuthorizationCode(
     body,
   });
 
-  const raw = await res.text();
-  console.log("[oauth/token] raw response", {
-    status: res.status,
-    ok: res.ok,
-    body: raw,
-  });
-
-  const json = (() => {
-    try {
-      return JSON.parse(raw) as TokenResponse | OAuthErrorBody;
-    } catch {
-      return {} as OAuthErrorBody;
-    }
-  })();
+  const json = await readJson<TokenResponse>(res);
 
   if (!res.ok) {
     const err = json as OAuthErrorBody;
@@ -115,7 +102,7 @@ export async function fetchUserinfo(
     },
   });
 
-  const body = await readJson<UserinfoResponse>("oauth/userinfo", res);
+  const body = await readJson<UserinfoResponse>(res);
 
   return { status: res.status, ok: res.ok, body };
 }
@@ -216,7 +203,7 @@ export async function fetchCampaigns(
     },
   });
 
-  const body = await readJson<CampaignsResponse>("campaigns", res);
+  const body = await readJson<CampaignsResponse>(res);
 
   return { status: res.status, ok: res.ok, body };
 }
@@ -237,7 +224,7 @@ export async function fetchCampaign(
     },
   );
 
-  const body = await readJson<DataEnvelope<CampaignDetail>>("campaign", res);
+  const body = await readJson<DataEnvelope<CampaignDetail>>(res);
 
   return { status: res.status, ok: res.ok, body };
 }
@@ -267,7 +254,7 @@ export async function fetchCampaignMetrics(
     },
   });
 
-  const body = await readJson<DataEnvelope<MetricsOverview>>("metrics", res);
+  const body = await readJson<DataEnvelope<MetricsOverview>>(res);
 
   return { status: res.status, ok: res.ok, body };
 }
@@ -311,7 +298,7 @@ export async function requestClientCredentialsToken(
     body,
   });
 
-  const json = await readJson<TokenResponse>("oauth/token:cc", res);
+  const json = await readJson<TokenResponse>(res);
 
   if (!res.ok) {
     const err = json as OAuthErrorBody;
@@ -341,7 +328,7 @@ export async function revokeGrant(
     body,
   });
 
-  const json = await readJson<unknown>("oauth/grants/revoke", res);
+  const json = await readJson<unknown>(res);
 
   if (res.ok || res.status === 404) return;
 
