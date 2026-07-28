@@ -382,10 +382,20 @@ Resource endpoints sit under **`/v1/`**, not `/api/v1/` — that prefix belongs 
 endpoints above. They take a bearer token the same way, and unlike `userinfo` they accept a
 **Client Credentials** token, which is what makes unattended access possible.
 
+<Tip>
+  `GET /v1/ping` accepts any valid token and touches no organization data — the cheapest way to
+  confirm a token works before debugging anything else.
+</Tip>
+
 <Info>
   Every response nests its payload under `data`, alongside a `meta.requestId` worth logging —
   quote it when asking Soundlink about a specific request.
 </Info>
+
+The examples below cover the three endpoints most integrations start with. See
+[Scopes and the endpoints they unlock](#7-scopes-and-the-endpoints-they-unlock) for the full
+list, and the [API reference](https://www.getsoundlink.com/docs/api-reference) for every
+parameter and response schema.
 
 ### List campaigns
 
@@ -542,16 +552,20 @@ Request the minimum you need — the consent screen shows each scope to the user
 list converts better. `scope` values are space-separated, must be unique, and must fall within
 your client's registered `allowedScopes`.
 
-### No scope required
-
-Client authentication or public metadata, not organization data.
+### No token — client authentication only
 
 | Endpoint | Notes |
 |---|---|
 | `GET /.well-known/oauth-authorization-server` | Public. No credentials. |
-| `GET /api/v1/oauth/authorize` | Starts consent. `client_id` + PKCE, no token. |
+| `GET /api/v1/oauth/authorize` | Starts consent. `client_id` + PKCE. |
 | `POST /api/v1/oauth/token` | `client_id` + `client_secret` (or PKCE verifier). |
 | `POST /api/v1/oauth/grants/revoke` | `client_id` + `client_secret` + `grant_id`. |
+
+### Any scope
+
+| Endpoint | Notes |
+|---|---|
+| `GET /v1/ping` | Verifies connectivity and authentication. Any valid token passes. |
 
 ### `openid`
 
@@ -567,18 +581,33 @@ Adds the `email` claim to the `userinfo` response. Unlocks no endpoint of its ow
 
 | Endpoint | Notes |
 |---|---|
+| `GET /v1/strategies` | See reference |
 | `GET /v1/campaigns` | Paginated, `createdAt desc` by default. |
 | `GET /v1/campaigns/{campaignId}` | Adds `strategyType`. `404` when not owned. |
+| `GET /v1/campaigns/{campaignId}/tiers` | See reference |
 
 ### `metrics:read`
 
 | Endpoint | Notes |
 |---|---|
 | `GET /v1/campaigns/{campaignId}/metrics/overview` | Totals for a date range. |
+| `GET /v1/campaigns/{campaignId}/metrics/breakdown` | See reference |
+| `GET /v1/campaigns/{campaignId}/metrics/breakdown/export` | See reference |
+| `GET /v1/campaigns/{campaignId}/metrics/engagement/export` | See reference |
+
+<Card
+  title="API reference"
+  icon="book-open"
+  href="https://www.getsoundlink.com/docs/api-reference"
+>
+  Request parameters, response schemas and error codes for every endpoint above.
+</Card>
 
 <Note>
-  This table covers the endpoints documented in this guide. `scopes_supported` in the discovery
-  document is the authoritative list of scopes your client can request.
+  The reference documents these endpoints with `x-api-key` authentication. The same endpoints
+  accept an OAuth bearer token — send `Authorization: Bearer <access_token>` in place of the API
+  key, and the scopes above apply. `scopes_supported` in the discovery document is the
+  authoritative list of scopes your client can request.
 </Note>
 
 ---
