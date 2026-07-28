@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -18,6 +18,14 @@ export const metadata: Metadata = {
     "Reference Next.js app for Soundlink Authorization Code + PKCE account linking",
 };
 
+/*
+ * The demo is light-theme only. Declaring the colour scheme stops a browser on a dark OS
+ * from restyling native UI — scrollbars, focus rings, form controls — against the page.
+ */
+export const viewport: Viewport = {
+  colorScheme: "light",
+};
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -28,8 +36,8 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      {/* Colours are plain Tailwind utilities; dark mode follows the OS. */}
-      <body className="flex min-h-full flex-col bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+      {/* Colours are plain Tailwind utilities — one light palette, no variants. */}
+      <body className="flex min-h-full flex-col bg-white text-neutral-900">
         {children}
       </body>
     </html>

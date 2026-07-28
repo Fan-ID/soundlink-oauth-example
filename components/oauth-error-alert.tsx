@@ -30,20 +30,14 @@ const HINTS: Record<string, string> = {
 
 export function OAuthErrorAlert({ error }: { error: string }) {
   return (
-    <div className="w-full space-y-1 rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/40">
-      <p className="text-sm font-semibold text-red-800 dark:text-red-300">
-        Couldn&apos;t connect
-      </p>
-      <p className="text-sm text-red-700 dark:text-red-400">
+    <div className="w-full space-y-1 rounded-xl border border-red-200 bg-red-50 p-4">
+      <p className="text-sm font-semibold text-red-800">Couldn&apos;t connect</p>
+      <p className="text-sm text-red-700">
         {MESSAGES[error] ?? `Something went wrong: ${error}`}
       </p>
-      <p className="font-mono text-xs text-red-600/80 dark:text-red-400/70">
-        {error}
-      </p>
+      <p className="font-mono text-xs text-red-600/80">{error}</p>
       {HINTS[error] && (
-        <p className="text-xs text-red-700/90 dark:text-red-400/80">
-          {HINTS[error]}
-        </p>
+        <p className="text-xs text-red-700/90">{HINTS[error]}</p>
       )}
     </div>
   );

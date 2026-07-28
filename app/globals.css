@@ -5,9 +5,13 @@
  * classes from Tailwind's own palette (neutral / red), so there is no theme token layer
  * to keep in sync.
  *
- * Dark mode follows the OS. `prefers-color-scheme` drives it directly, so there is no
- * class to toggle and nothing to hydrate.
+ * One light theme, no `dark:` variants — the demo looks the same on every machine. The
+ * `colorScheme` viewport export in app/layout.tsx pins native UI to light too.
  */
+:root {
+  color-scheme: light;
+}
+
 @theme inline {
   /* Set by next/font in app/layout.tsx. */
   --font-sans: var(--font-sans);
