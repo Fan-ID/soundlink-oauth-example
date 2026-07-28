@@ -376,7 +376,160 @@ Send exactly one `Authorization` header — two are rejected rather than merged.
 
 ---
 
-## 6. Scopes
+## 6. Reading organization data
+
+Resource endpoints sit under **`/v1/`**, not `/api/v1/` — that prefix belongs to the OAuth
+endpoints above. They take a bearer token the same way, and unlike `userinfo` they accept a
+**Client Credentials** token, which is what makes unattended access possible.
+
+<Info>
+  Every response nests its payload under `data`, alongside a `meta.requestId` worth logging —
+  quote it when asking Soundlink about a specific request.
+</Info>
+
+### List campaigns
+
+`GET /v1/campaigns` · scope `campaigns:read`
+
+<CodeGroup>
+```bash cURL
+curl "https://api.getsoundlink.com/v1/campaigns?page=1&pageSize=10" \
+  -H "Authorization: Bearer ACCESS_TOKEN" \
+  -H "Accept: application/json"
+```
+
+```ts TypeScript
+const url = new URL("https://api.getsoundlink.com/v1/campaigns");
+url.searchParams.set("page", "1");
+url.searchParams.set("pageSize", "10");
+
+const res = await fetch(url, {
+  headers: {
+    Authorization: `Bearer ${accessToken}`,
+    Accept: "application/json",
+  },
+});
+
+const { data } = await res.json();
+console.log(data.items, data.pagination.totalCount);
+```
+</CodeGroup>
+
+```json 200 Response
+{
+  "data": {
+    "items": [
+      {
+        "campaignId": "f1e28d31-c358-4284-9bef-00a2334625fd",
+        "organizationId": "org_xyz",
+        "status": "active",
+        "socialPlatform": "meta",
+        "dailyBudget": 20.0,
+        "totalBudget": 140.0,
+        "campaignDuration": 7,
+        "generation": 3,
+        "createdAt": "2026-04-01T10:00:00Z",
+        "updatedAt": "2026-04-08T12:00:00Z"
+      }
+    ],
+    "pagination": { "page": 1, "pageSize": 10, "totalCount": 42, "totalPages": 5 }
+  },
+  "meta": { "requestId": "550e8400-e29b-41d4-a716-446655440000" }
+}
+```
+
+<ParamField query="page" type="integer" default="1">
+  Minimum `1`.
+</ParamField>
+
+<ParamField query="pageSize" type="integer" default="10">
+  Between `1` and `100`. Values outside the range are rejected with `400`.
+</ParamField>
+
+<ParamField query="sortBy" type="string" default="createdAt">
+  `createdAt` or `status`.
+</ParamField>
+
+<ParamField query="sortOrder" type="string" default="desc">
+  `asc` or `desc`.
+</ParamField>
+
+### One campaign
+
+`GET /v1/campaigns/{campaignId}` · scope `campaigns:read`
+
+```bash cURL
+curl https://api.getsoundlink.com/v1/campaigns/CAMPAIGN_ID \
+  -H "Authorization: Bearer ACCESS_TOKEN"
+```
+
+The list summary's fields, plus an optional `strategyType`. A campaign the token's organization
+does not own answers `404` — the same as one that does not exist, so ownership is not
+enumerable.
+
+<AccordionGroup>
+  <Accordion title="status values">
+    `creating` · `active` · `paused` · `stopped` · `completed` · `failed` · `ended`
+  </Accordion>
+  <Accordion title="generation values">
+    `1`, `2` or `3`. Writes are supported only for generation `3`.
+  </Accordion>
+</AccordionGroup>
+
+### Campaign metrics
+
+`GET /v1/campaigns/{campaignId}/metrics/overview` · scope `metrics:read`
+
+Totals for a date range, with no per-day rows.
+
+```bash cURL
+curl "https://api.getsoundlink.com/v1/campaigns/CAMPAIGN_ID/metrics/overview?startDate=2026-04-01&endDate=2026-04-08" \
+  -H "Authorization: Bearer ACCESS_TOKEN"
+```
+
+```json 200 Response
+{
+  "data": {
+    "listeners": 4821,
+    "streams": 9340,
+    "followers": 312,
+    "impressions": 48210,
+    "ad_clicks": 1120,
+    "link_clicks": 890,
+    "spend_media": 134.5,
+    "spend_total": 168.13,
+    "fees": 33.63,
+    "currency": "USD",
+    "cpl": 0.028,
+    "cpf": 0.43,
+    "streams_per_listener": 1.94
+  },
+  "meta": { "requestId": "550e8400-e29b-41d4-a716-446655440000" }
+}
+```
+
+<ParamField query="startDate" type="string" default="campaign start">
+  `YYYY-MM-DD`, inclusive.
+</ParamField>
+
+<ParamField query="endDate" type="string" default="today">
+  `YYYY-MM-DD`, inclusive. Must be greater than or equal to `startDate`, or you get `400`.
+</ParamField>
+
+`cpl`, `cpf` and `streams_per_listener` are derived server-side — media spend per listener, per
+follower, and streams per listener, each `0` when listeners or followers are `0`. Handle
+`impressions`, `ad_clicks` and `link_clicks` as **nullable**: a platform that did not report
+them sends `null`, which is not the same as zero.
+
+<Warning>
+  `campaigns:read` does not imply `metrics:read`. A token holding only the first reads campaigns
+  and gets `403 insufficient_scope` on metrics — so request both if you show them together, and
+  handle each independently if you request them separately.
+</Warning>
+
+---
+
+## 7. Scopes and the endpoints they unlock
 
 | Scope | Grants |
 |---|---|
@@ -389,9 +542,48 @@ Request the minimum you need — the consent screen shows each scope to the user
 list converts better. `scope` values are space-separated, must be unique, and must fall within
 your client's registered `allowedScopes`.
 
+### No scope required
+
+Client authentication or public metadata, not organization data.
+
+| Endpoint | Notes |
+|---|---|
+| `GET /.well-known/oauth-authorization-server` | Public. No credentials. |
+| `GET /api/v1/oauth/authorize` | Starts consent. `client_id` + PKCE, no token. |
+| `POST /api/v1/oauth/token` | `client_id` + `client_secret` (or PKCE verifier). |
+| `POST /api/v1/oauth/grants/revoke` | `client_id` + `client_secret` + `grant_id`. |
+
+### `openid`
+
+| Endpoint | Notes |
+|---|---|
+| `GET /api/v1/oauth/userinfo` | **Authorization Code tokens only.** A Client Credentials token gets `403 access_denied`. |
+
+### `email`
+
+Adds the `email` claim to the `userinfo` response. Unlocks no endpoint of its own.
+
+### `campaigns:read`
+
+| Endpoint | Notes |
+|---|---|
+| `GET /v1/campaigns` | Paginated, `createdAt desc` by default. |
+| `GET /v1/campaigns/{campaignId}` | Adds `strategyType`. `404` when not owned. |
+
+### `metrics:read`
+
+| Endpoint | Notes |
+|---|---|
+| `GET /v1/campaigns/{campaignId}/metrics/overview` | Totals for a date range. |
+
+<Note>
+  This table covers the endpoints documented in this guide. `scopes_supported` in the discovery
+  document is the authoritative list of scopes your client can request.
+</Note>
+
 ---
 
-## 7. Revoking a grant
+## 8. Revoking a grant
 
 Disconnect an organization by revoking the grant. Authenticate with your client credentials and
 identify the grant by `grant_id` (available as a token claim).
@@ -424,7 +616,7 @@ the full consent flow again.
 
 ---
 
-## 8. Errors and rate limits
+## 9. Errors and rate limits
 
 All OAuth errors return `{ "error": "<code>" }`.
 
@@ -441,6 +633,26 @@ All OAuth errors return `{ "error": "<code>" }`.
 | `insufficient_scope` | `403` | Token lacks a required scope |
 | `access_denied` | `403` (or redirect) | User declined; or wrong grant type; or feature flag off |
 | `temporarily_unavailable` | `429` | Rate limited |
+
+### Resource errors have a different shape
+
+The `/v1/` resource endpoints wrap the error in an object and add a request id, rather than
+returning the flat `{ "error": "<code>" }` the OAuth endpoints use. Branch on the nested
+`error.code`:
+
+```json 401
+{
+  "error": {
+    "code": "invalid_token",
+    "message": "OAuth access token is invalid or expired."
+  },
+  "meta": { "requestId": "550e8400-e29b-41d4-a716-446655440000" }
+}
+```
+
+`400` (bad query), `401`, `403`, `404`, `429` and `500` are all possible. A `404` carries
+`campaign_not_found` — returned both for a campaign that does not exist and for one your
+organization does not own.
 
 ### Authorize error behaviour
 
@@ -471,7 +683,7 @@ usage far below these limits.
 
 ---
 
-## 9. Security checklist
+## 10. Security checklist
 
 <AccordionGroup>
   <Accordion title="Always send and verify state" icon="shield-check">
@@ -511,9 +723,9 @@ usage far below these limits.
 A complete, runnable implementation of everything above:
 
 <Card title="soundlink-oauth-example" icon="github" href="https://github.com/Fan-ID/soundlink-oauth-example">
-  Next.js app covering the PKCE connect flow, server-side code exchange, Client Credentials token
-  generation, `userinfo`, and grant revocation — with tokens held server-side and every request
-  triggered by an explicit action.
+  Next.js app covering the PKCE connect flow, server-side code exchange, `userinfo`, minted
+  Client Credentials tokens, the campaign and metrics reads, and grant revocation — with every
+  token held server-side and never sent to the browser.
 </Card>
 
 Useful entry points:
@@ -522,8 +734,11 @@ Useful entry points:
 |---|---|
 | Building the authorize URL, PKCE, `state` cookie | `app/api/oauth/connect/route.ts` |
 | Code exchange and reading `organization_id` | `app/api/oauth/callback/route.ts` |
-| Client Credentials token + caching | `app/api/oauth/token/route.ts` |
 | Calling `userinfo` | `app/api/oauth/userinfo/route.ts` |
+| Minting and caching a Client Credentials token | `lib/oauth/token-cache.ts`, `lib/oauth/org-token.ts` |
+| Listing campaigns | `app/api/campaigns/route.ts` |
+| Campaign detail and metrics | `app/api/campaigns/[campaignId]/` |
+| Every outbound Soundlink call in one file | `lib/oauth/client.ts` |
 | Grant revocation | `app/api/oauth/disconnect/route.ts` |
 
 ---
