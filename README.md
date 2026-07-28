@@ -17,15 +17,18 @@ sequenceDiagram
     Soundlink-->>App: Redirect with ?code
     App->>Soundlink: POST /oauth/token (code + code_verifier)
     Soundlink-->>App: Access token
-    Note over App: Saves organization_id, keeps the token server-side
-
-    User->>App: Fetch userinfo
     App->>Soundlink: GET /oauth/userinfo (Bearer)
     Soundlink-->>App: sub, email
+    Note over App: Saves organization_id + email, keeps the token server-side
 
-    User->>App: Generate new token
-    App->>Soundlink: POST /oauth/token (client_credentials)
-    Soundlink-->>App: Access token
+    User->>App: Open an organization
+    App->>Soundlink: GET /v1/campaigns (Bearer)
+    Soundlink-->>App: Campaign page + pagination
+
+    User->>App: Open a campaign
+    App->>Soundlink: GET /v1/campaigns/:id
+    App->>Soundlink: GET /v1/campaigns/:id/metrics/overview
+    Soundlink-->>App: Campaign fields + metric totals
 
     User->>App: Disconnect
     App->>Soundlink: POST /oauth/grants/revoke
@@ -86,7 +89,7 @@ const body = new URLSearchParams({
 });
 ```
 
-### 3. Persist org metadata, keep token server-side
+### 3. Persist org metadata and identity, keep token server-side
 
 `organization_id` and `grant_id` come from JWT claims. The access token stays in an in-memory server store; only ids/scopes/expiry go back to the browser.
 
@@ -108,11 +111,19 @@ return homeRedirect({
 });
 ```
 
-There is no refresh token. When this consent token expires (~1h), reconnect is required to call userinfo again.
+### 4. Read the email — authorization-code token only
 
-### 4. Fetch userinfo — authorization-code token only
+Back on the page, the returning organization is read once, while the consent token is still
+fresh. `POST /api/oauth/userinfo` spends that token: userinfo requires
+`grant_type=authorization_code`, so a client-credentials token is rejected here
+(`403 access_denied`).
 
-`POST /api/oauth/userinfo` uses the stored consent token. Soundlink rejects client-credentials tokens here (`403 access_denied`).
+```ts
+// components/connected-orgs.tsx
+void fetchOrgProfile(connected).then((profile) => {
+  if (profile) setOrgProfile(connected, profile);
+});
+```
 
 ```ts
 // app/api/oauth/userinfo/route.ts
@@ -120,31 +131,63 @@ const token = getAccessToken(organizationId);
 const result = await fetchUserinfo(getOAuthConfig(), token.accessToken);
 ```
 
+The email is stored beside the `organization_id` so each tile can name itself with no
+request on render. There is no refresh token: once this token expires (~1h) reconnecting is
+the only way to read userinfo again — which is why it is read at connect time rather than on
+demand.
+
+### 5. List campaigns — a minted token, on a public-API resource
+
+`/orgs/<organization id>` shows that organization's campaigns. `GET /api/campaigns` proxies
+the request so the token stays on the server, clamping `page`/`pageSize` to the bounds the
+endpoint accepts.
+
+The token here is **minted**, not the one from consent: `client_id` + `client_secret` +
+the stored `organization_id`, cached until it is nearly expired and then re-minted. That is
+what makes the stored organization id valuable — consent tokens last an hour and cannot be
+refreshed, so a page depending on one would break shortly after connecting.
+
 ```ts
-// lib/oauth/client.ts
-fetch(`${config.apiBaseUrl}/api/v1/oauth/userinfo`, {
-  headers: { Authorization: `Bearer ${accessToken}` },
-});
+// app/api/campaigns/route.ts
+const { accessToken } = await getClientCredentialsToken(config, organizationId);
 ```
 
-### 5. Mint a machine token — client credentials
+```ts
+// lib/oauth/client.ts
+const url = new URL(`${config.apiBaseUrl}/v1/campaigns`);
+url.searchParams.set("page", String(params.page));
+url.searchParams.set("pageSize", String(params.pageSize));
 
-`POST /api/oauth/token` authenticates as the app (`client_id` + `client_secret`) for a given `organization_id`. Requires an existing grant from step 2. The route returns claims/expiry, never the raw token.
+fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+```
+
+Needs `campaigns:read`; a token without it gets `403`. Items and pagination arrive under
+`data`. If the client is not allowed the `client_credentials` grant, the route falls back to
+the consent token so the page still works for the hour after connecting.
+
+### 6. Campaign detail + metrics — two scopes, two requests
+
+`/orgs/<organization id>/campaigns/<campaign id>` reads the campaign and its metric totals
+through `/api/campaigns/:id` and `/api/campaigns/:id/metrics`.
+
+The two are requested in parallel and rendered independently, because they need different
+scopes — `campaigns:read` and `metrics:read`. A token allowed one and refused the other shows
+what it can rather than failing both.
 
 ```ts
 // lib/oauth/client.ts
-const body = new URLSearchParams({
-  grant_type: "client_credentials",
-  client_id: config.clientId,
-  client_secret: config.clientSecret,
-  organization_id: organizationId,
-  scope: config.scopes,
-});
+`${config.apiBaseUrl}/v1/campaigns/${campaignId}`;
+`${config.apiBaseUrl}/v1/campaigns/${campaignId}/metrics/overview`;
 ```
 
-### 6. Disconnect — revoke grant + clear local tokens
+Metrics dates are optional and validated as `YYYY-MM-DD` before being forwarded; omitted, the
+endpoint uses campaign start through today. `impressions`, `ad_clicks` and `link_clicks` are
+nullable and render as `—`.
 
-`POST /api/oauth/disconnect` revokes the grant at Soundlink, then drops both the consent token and any cached client-credentials token.
+### 7. Disconnect — revoke grant + clear the local entry
+
+`POST /api/oauth/disconnect` revokes the grant at Soundlink, then drops both tokens held for
+the organization. The browser removes the organization from localStorage afterwards.
 
 ```ts
 // app/api/oauth/disconnect/route.ts
@@ -154,6 +197,9 @@ if (grantId) {
 clearAccessToken(organizationId);
 clearToken(organizationId);
 ```
+
+Clearing the minted token matters: revocation only stops **new** tokens, so a cached one
+would otherwise keep working until it expired.
 
 ```ts
 // lib/oauth/client.ts
@@ -168,8 +214,8 @@ Revocation stops **new** tokens. An already-issued access token remains valid un
 **Prerequisites**
 
 - Node 20+
-- A Soundlink OAuth client with `authorization_code` and `client_credentials` grant types, and
-  redirect URI `http://localhost:3005/api/oauth/callback`
+- A Soundlink OAuth client with the `authorization_code` and `client_credentials` grant
+  types, and redirect URI `http://localhost:3005/api/oauth/callback`
 - `THIRD_PARTY_INTEGRATIONS_ENABLED` enabled for the target organization
 
 **Run**
@@ -189,4 +235,6 @@ Revocation stops **new** tokens. An already-issued access token remains valid un
    npm run dev
    ```
 
-4. Open [http://localhost:3005](http://localhost:3005) and click **Sign in with Soundlink**.
+4. Open [http://localhost:3005](http://localhost:3005) and connect an organization. It
+   appears as a tile — short id, email, Disconnect — and clicking it opens
+   `/orgs/<organization id>`.
