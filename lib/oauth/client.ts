@@ -143,6 +143,35 @@ export interface Campaign {
   updatedAt: string;
 }
 
+/** The detail response: the list fields, plus one the summary omits. */
+export interface CampaignDetail extends Campaign {
+  strategyType?: string;
+}
+
+/**
+ * Campaign totals for a date range.
+ *
+ * Snake_case because that is the wire format — unlike the campaign resources, which are
+ * camelCase. `cpl`, `cpf` and `streams_per_listener` are derived server-side from the spend
+ * and audience figures, so there is nothing to compute here.
+ */
+export interface MetricsOverview {
+  listeners: number;
+  streams: number;
+  followers: number;
+  /** Null when the platform did not report it. */
+  impressions: number | null;
+  ad_clicks: number | null;
+  link_clicks: number | null;
+  spend_media: number;
+  spend_total: number;
+  fees: number;
+  currency: string;
+  cpl: number;
+  cpf: number;
+  streams_per_listener: number;
+}
+
 export interface CampaignsPagination {
   page: number;
   pageSize: number;
@@ -153,6 +182,12 @@ export interface CampaignsPagination {
 /** Envelope of `GET /v1/campaigns` — items and pagination live under `data`. */
 export interface CampaignsResponse {
   data: { items: Campaign[]; pagination: CampaignsPagination };
+  meta?: { requestId?: string };
+}
+
+/** Every campaign resource wraps its payload the same way. */
+export interface DataEnvelope<T> {
+  data: T;
   meta?: { requestId?: string };
 }
 
@@ -182,6 +217,57 @@ export async function fetchCampaigns(
   });
 
   const body = await readJson<CampaignsResponse>("campaigns", res);
+
+  return { status: res.status, ok: res.ok, body };
+}
+
+/** One campaign. Needs `campaigns:read`. 404s for an id the organization does not own. */
+export async function fetchCampaign(
+  config: OAuthConfig,
+  accessToken: string,
+  campaignId: string,
+): Promise<BearerCallResult> {
+  const res = await fetch(
+    `${config.apiBaseUrl}/v1/campaigns/${encodeURIComponent(campaignId)}`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+      },
+    },
+  );
+
+  const body = await readJson<DataEnvelope<CampaignDetail>>("campaign", res);
+
+  return { status: res.status, ok: res.ok, body };
+}
+
+/**
+ * Campaign totals for a date range. Needs `metrics:read` — a different scope from the
+ * campaign resources, so a token can be allowed one and refused the other.
+ *
+ * Omitting the dates lets the endpoint apply its own defaults: campaign start through today.
+ */
+export async function fetchCampaignMetrics(
+  config: OAuthConfig,
+  accessToken: string,
+  campaignId: string,
+  range: { startDate?: string; endDate?: string } = {},
+): Promise<BearerCallResult> {
+  const url = new URL(
+    `${config.apiBaseUrl}/v1/campaigns/${encodeURIComponent(campaignId)}/metrics/overview`,
+  );
+  if (range.startDate) url.searchParams.set("startDate", range.startDate);
+  if (range.endDate) url.searchParams.set("endDate", range.endDate);
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+    },
+  });
+
+  const body = await readJson<DataEnvelope<MetricsOverview>>("metrics", res);
 
   return { status: res.status, ok: res.ok, body };
 }
