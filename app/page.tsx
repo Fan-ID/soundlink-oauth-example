@@ -3,21 +3,15 @@ import { ConnectedOrgs } from "@/components/connected-orgs";
 import { OAuthErrorAlert } from "@/components/oauth-error-alert";
 
 /**
- * Root page. Deliberately does no data fetching of its own: the connected-organization
- * list lives in the browser (localStorage), and tokens and scope data are only requested
- * when the user clicks.
+ * Root page. Does no data fetching of its own — the connected-organization list lives in
+ * the browser (localStorage).
  *
  * The flow it demonstrates:
  *
- *   connect → consent → callback → organization id saved to localStorage
- *   then, per organization: generate token → fetch scope data → disconnect
+ *   connect → consent → callback → organization saved to localStorage → disconnect
  *
- * Consent is what creates the grant, and the stored `organization_id` is what lets the app
- * keep minting client-credentials tokens afterwards without involving the user again.
- *
- * Note the two actions use different grants on purpose: "Generate token" mints a
- * client-credentials token, while "Fetch scope data" spends the consent token, because
- * `/oauth/userinfo` accepts only the latter. See the README.
+ * Consent is what creates the grant. What a partner keeps afterwards is the
+ * `organization_id`, which is why the grid is a list of ids and nothing more.
  */
 export default async function Home({
   searchParams,
@@ -27,14 +21,13 @@ export default async function Home({
   const params = await searchParams;
 
   return (
-    <main className="mx-auto flex w-full max-w-lg flex-1 flex-col items-center gap-6 px-4 py-16">
+    <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col items-center gap-6 px-4 py-16">
       <div className="space-y-2 text-center">
         <h1 className="text-3xl font-semibold tracking-tight">
           Soundlink OAuth Example
         </h1>
-        <p className="text-sm text-neutral-500 dark:text-neutral-400">
-          Connect an organization, then generate a token for it and read the data its
-          granted scopes allow.
+        <p className="text-sm text-neutral-500">
+          Connect a Soundlink organization, then pick which one to work with.
         </p>
       </div>
 
