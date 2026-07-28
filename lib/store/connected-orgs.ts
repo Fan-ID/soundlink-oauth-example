@@ -20,6 +20,19 @@ import { useSyncExternalStore } from "react";
  *   - every mounted component re-renders when the list changes, including from another tab.
  */
 
+/**
+ * Identity claims read from `GET /oauth/userinfo`, kept so the list can describe an
+ * organization without a request on render. Claims, not credentials.
+ */
+export interface OrgProfile {
+  /** `sub` — the Soundlink user who granted access. Always present on success. */
+  sub?: string;
+  /** Only returned when the `email` scope was granted. */
+  email?: string;
+  /** When these claims were last read. */
+  fetchedAt: string;
+}
+
 export interface ConnectedOrg {
   organizationId: string;
   /** Identifies the grant to revoke on disconnect. Not a secret. */
@@ -28,6 +41,8 @@ export interface ConnectedOrg {
   scopes?: string[];
   /** When the server-held consent token expires. Not the token itself. */
   tokenExpiresAt?: string;
+  /** What userinfo said about this organization. Absent until it has been read. */
+  profile?: OrgProfile;
   connectedAt: string;
 }
 
@@ -90,6 +105,21 @@ export function useConnectedOrgs(): ConnectedOrg[] {
 }
 
 /**
+ * Whether localStorage has been read yet.
+ *
+ * False on the server and through the first hydration pass, where the list is necessarily
+ * empty. Anything that would otherwise render "not connected" needs this to tell that apart
+ * from "not read yet", or it flashes the wrong answer for one frame.
+ */
+export function useOrgsLoaded(): boolean {
+  return useSyncExternalStore(
+    subscribe,
+    () => true,
+    () => false,
+  );
+}
+
+/**
  * Add an organization, or update one already present.
  * Idempotent, so re-running it (React strict mode, a refresh, a repeated callback)
  * cannot create duplicates.
@@ -139,6 +169,33 @@ export function addConnectedOrg(org: {
       connectedAt: new Date().toISOString(),
     },
   ]);
+}
+
+/**
+ * Attach userinfo claims to an organization already in the list.
+ *
+ * A no-op if the organization is gone (disconnected while the request was in flight), and
+ * a no-op if the claims are unchanged — otherwise a re-read would rewrite storage and
+ * re-render every card for nothing.
+ */
+export function setOrgProfile(
+  organizationId: string,
+  profile: OrgProfile,
+): void {
+  const existing = readOrgs();
+  const match = existing.find((o) => o.organizationId === organizationId);
+  if (!match) return;
+  if (
+    match.profile?.sub === profile.sub &&
+    match.profile?.email === profile.email
+  ) {
+    return;
+  }
+  write(
+    existing.map((o) =>
+      o.organizationId === organizationId ? { ...o, profile } : o,
+    ),
+  );
 }
 
 /** Remove an organization from the list. Safe to call when it is already gone. */
