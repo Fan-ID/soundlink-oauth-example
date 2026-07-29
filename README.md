@@ -1,6 +1,21 @@
 # Soundlink OAuth Example
 
-A reference Next.js app for connecting a Soundlink organization with Authorization Code + PKCE.
+A reference Next.js app for connecting a Soundlink organization with Authorization Code + PKCE,
+then reading campaigns and metrics with Client Credentials. Tokens stay on the server; the
+browser only keeps organization metadata.
+
+> **Demo only.** Access tokens live in an in-memory store and reset when the process restarts.
+> For production, persist tokens (and grant ids) in Redis or a database. See [SECURITY.md](SECURITY.md).
+
+## Further reading
+
+This repo is the **OAuth reference app**. Campaign APIs, metrics, SDKs, and API-key quickstarts
+live in the public docs:
+
+- [For Developers — API guides](https://www.getsoundlink.com/docs/developers#api-guides) —
+  sync campaigns, create/manage campaigns, metrics, JSONL exports, API reference
+- [Docs index for agents](https://www.getsoundlink.com/docs/llms.txt) — machine-readable list
+  of all documentation pages
 
 ## Flow
 
@@ -253,11 +268,25 @@ Revocation stops **new** tokens. An already-issued access token remains valid un
 **Prerequisites**
 
 - Node 20+
-- A Soundlink OAuth client with the `authorization_code` and `client_credentials` grant
-  types, and redirect URI `http://localhost:3005/api/oauth/callback`
-- `THIRD_PARTY_INTEGRATIONS_ENABLED` enabled for the target organization
+- A Soundlink OAuth client — there is no self-service registration. Request one from your
+  Soundlink partner contact (or email [hello@getsoundlink.com](mailto:hello@getsoundlink.com)). Ask for:
+  - Grant types `authorization_code` and `client_credentials`
+  - Scopes matching `SOUNDLINK_SCOPES` (defaults below)
+  - A redirect URI for this app (see below)
+- `THIRD_PARTY_INTEGRATIONS_ENABLED` enabled for each organization that will consent
 - The client allowed the scopes it asks for — `SOUNDLINK_SCOPES` defaults to
   `openid email campaigns:read metrics:read`, and the campaign pages need the last two
+
+**Redirect URI**
+
+Soundlink matches redirect URIs **exactly**. For this example:
+
+- Localhost HTTP (`http://localhost:3005/api/oauth/callback`) works when that exact URI is
+  registered on the client.
+- If your client only allows HTTPS redirect URIs, run an HTTPS tunnel (ngrok, Cloudflare
+  Tunnel) and register the tunnel callback URL instead. Set `SOUNDLINK_REDIRECT_URI` and
+  `APP_BASE_URL` to the tunnel origin, and set `ALLOWED_DEV_ORIGINS` to the tunnel hostname
+  so Next.js accepts requests from it (see `.env.example`).
 
 **Run**
 
@@ -267,7 +296,9 @@ Revocation stops **new** tokens. An already-issued access token remains valid un
    cp .env.example .env.local
    ```
 
-2. Fill in `SOUNDLINK_CLIENT_ID`, `SOUNDLINK_CLIENT_SECRET` and `SESSION_SECRET`.
+2. Fill in `SOUNDLINK_CLIENT_ID`, `SOUNDLINK_CLIENT_SECRET`, and `SESSION_SECRET`.
+   Use a long random string for `SESSION_SECRET` — if unset, the app falls back to a known
+   development default that must never be used outside local development.
 
 3. Install and start:
 

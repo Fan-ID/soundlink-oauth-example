@@ -122,8 +122,10 @@ You will receive a `client_id` and a `client_secret`.
 </Warning>
 
 <Tip>
-  Because redirect URIs must be HTTPS, local development needs an HTTPS tunnel (ngrok,
-  Cloudflare Tunnel, or similar). Register the tunnel URL as an additional redirect URI.
+  Production redirect URIs must be HTTPS. For local development you can either register an
+  exact `http://localhost:...` callback (if Soundlink added that URI to your client) or use an
+  HTTPS tunnel (ngrok, Cloudflare Tunnel) and register the tunnel URL as an additional redirect
+  URI.
 </Tip>
 
 ### Feature-flag enablement
@@ -394,8 +396,10 @@ endpoints above. They take a bearer token the same way, and unlike `userinfo` th
 
 The examples below cover the three endpoints most integrations start with. See
 [Scopes and the endpoints they unlock](#7-scopes-and-the-endpoints-they-unlock) for the full
-list, and the [API reference](https://www.getsoundlink.com/docs/api-reference) for every
-parameter and response schema.
+list, the [API reference](https://www.getsoundlink.com/docs/api-reference) for every
+parameter and response schema, and [For Developers — API guides](https://www.getsoundlink.com/docs/developers#api-guides)
+for campaign sync, create/manage, metrics, and JSONL patterns. Coding agents can load the
+full docs index from [llms.txt](https://www.getsoundlink.com/docs/llms.txt).
 
 ### List campaigns
 
@@ -749,7 +753,9 @@ usage far below these limits.
 
 ## Reference application
 
-A complete, runnable implementation of everything above:
+A complete, runnable implementation of everything above. For broader Public API guides (beyond
+OAuth), see [For Developers](https://www.getsoundlink.com/docs/developers#api-guides) and the
+[docs index for agents](https://www.getsoundlink.com/docs/llms.txt).
 
 <Card title="soundlink-oauth-example" icon="github" href="https://github.com/Fan-ID/soundlink-oauth-example">
   Next.js app covering the PKCE connect flow, server-side code exchange, `userinfo`, minted
