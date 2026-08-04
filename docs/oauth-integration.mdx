@@ -608,10 +608,11 @@ Adds the `email` claim to the `userinfo` response. Unlocks no endpoint of its ow
 </Card>
 
 <Note>
-  The reference documents these endpoints with `x-api-key` authentication. The same endpoints
-  accept an OAuth bearer token — send `Authorization: Bearer <access_token>` in place of the API
-  key, and the scopes above apply. `scopes_supported` in the discovery document is the
-  authoritative list of scopes your client can request.
+  The reference documents these endpoints with `Authorization: Bearer sk_...` authentication
+  (the `x-api-key` header also still works but is deprecated, retiring 2026-08-17). The same
+  endpoints accept an OAuth bearer token too — send `Authorization: Bearer <access_token>` in
+  place of the API key, and the scopes above apply. `scopes_supported` in the discovery document
+  is the authoritative list of scopes your client can request.
 </Note>
 
 ---
