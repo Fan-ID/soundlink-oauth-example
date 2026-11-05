@@ -17,6 +17,10 @@ live in the public docs:
 - [Docs index for agents](https://www.getsoundlink.com/docs/llms.txt) — machine-readable list
   of all documentation pages
 
+Sign-in in this repo stays on Soundlink. To practice create, stop, and refund locally,
+without Meta spend, use the [API emulator](https://www.getsoundlink.com/docs/api-emulator)
+and the [emulator example](https://github.com/Fan-ID/soundlink-api-emulator-example).
+
 ## Flow
 
 ```mermaid
